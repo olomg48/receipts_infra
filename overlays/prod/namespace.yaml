@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: receipt-prod
+  labels:
+    app.kubernetes.io/part-of: receipt-tracker
+    environment: prod
