@@ -16,11 +16,14 @@ No ingress is configured; the frontend and API are internal ClusterIP Services. 
 
 ## Dev environment
 
-The dev overlay deploys:
+The dev overlay starts with:
 
-- Frontend: `receipt-tracker-frontend:dev`
-- API: `receipt-tracker-backend:dev`
+- Frontend: `ghcr.io/olomg48/receipt-tracker-frontend:dev`
+- API: `ghcr.io/olomg48/receipt-tracker-backend:dev`
+- PostgreSQL: `ghcr.io/olomg48/receipt-tracker-postgres:17-alpine`
 - PostgreSQL StatefulSet with a 5 Gi PVC
+
+The manual publisher in the application repo updates the application image tags to the application commit SHA and mirrors PostgreSQL 17 Alpine to GHCR. PostgreSQL uses a fixed `17-alpine` tag.
 
 The dev PostgreSQL data survives pod restarts while its PVC remains. This single-node local-path storage is not a backup or high-availability solution. Verify the default StorageClass exists with `kubectl get storageclass`.
 
@@ -45,20 +48,6 @@ kubectl create secret generic receipt-db-credentials `
 
 Do not commit that file or pass real secret values on a command line in a shared environment.
 
-The `:dev` images are local development tags and must be present in k3s containerd. Docker Desktop images do not automatically exist on the k3s server. Build for the server architecture, transfer an archive to the server, and import it, for example:
-
-```powershell
-docker build --platform linux/amd64 -t receipt-tracker-backend:dev -f ..\recipts\backend\Dockerfile ..\recipts\backend
-docker build --platform linux/amd64 -t receipt-tracker-frontend:dev -f ..\recipts\frontend\Dockerfile ..\recipts\frontend
-docker save receipt-tracker-backend:dev receipt-tracker-frontend:dev -o receipt-tracker-images.tar
-```
-
-Copy the archive to the k3s server, then run:
-
-```sh
-sudo k3s ctr images import receipt-tracker-images.tar
-```
-
 Apply with:
 
 ```sh
@@ -78,7 +67,7 @@ Then open `http://localhost:8080`.
 
 The prod overlay does not include PostgreSQL. It expects a pre-created Secret named `receipt-db-credentials` in namespace `receipt-prod`, with a `DATABASE_URL` key containing the external PostgreSQL SQLAlchemy URL. Configure TLS in the URL/provider connection settings. Do not put credentials in this repository.
 
-Before deploying, replace `release-tag-required` in `overlays/prod/kustomization.yaml` with the immutable image tag or digest published by CI. The current frontend/backend images must be pushed to GHCR under:
+The manual publisher in the application repo updates both prod image tags to the application commit SHA. The frontend/backend images are published to GHCR under:
 
 ```text
 ghcr.io/olomg48/receipt-tracker-backend
@@ -93,7 +82,7 @@ Apply with:
 kubectl apply -k overlays/prod
 ```
 
-Do not sync prod until images exist, the tag is set, and the database Secret is configured. The PostgreSQL migration is not currently an Argo CD hook; add a one-shot migration Job after the API schema and migration flow are ready.
+Do not sync prod until the workflow has published the images and the database Secret is configured. The PostgreSQL migration is not currently an Argo CD hook; add a one-shot migration Job after the API schema and migration flow are ready.
 
 ## Kustomize validation
 
