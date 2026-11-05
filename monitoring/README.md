@@ -43,7 +43,7 @@ On a single-node cluster, these add up to about 1.24 Gi of requests and 4 Gi of 
 
 This is a modest single-node setup rather than the full kube-prometheus-stack chart. It scrapes Prometheus, Loki, kube-state-metrics, and node-exporter; control-plane-specific metrics and alert routing are not configured yet. Alloy has cluster-wide read access to pod metadata/log streams through a narrowly scoped ClusterRole. Keep monitoring access private and avoid writing secrets or receipt contents to application logs.
 
-For the node-exporter scrape, Prometheus sets the `instance` label to the Kubernetes node name hosting the Prometheus pod. Other scrape jobs keep their normal target-based `instance` labels.
+For node-exporter, Prometheus discovers pods in the `monitoring` namespace and sets the `instance` label to the Kubernetes node name hosting each exporter pod. Its service account has only namespaced pod get/list/watch permissions for discovery. Other scrape jobs keep their normal target-based `instance` labels.
 
 Images are pinned to explicit upstream versions. They are pulled from the upstream registries referenced in the manifests; this monitoring stack does not yet mirror third-party images into GHCR.
 
