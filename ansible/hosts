@@ -1,0 +1,12 @@
+all:
+  vars:
+    ansible_user: ansible
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+  children:
+    k3s_master:
+      hosts:
+        192.168.18.85:
+    k3s_workers:
+      hosts:
+        192.168.18.84:
+        192.168.18.83:
