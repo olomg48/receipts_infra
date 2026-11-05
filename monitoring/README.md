@@ -28,6 +28,19 @@ Do not commit the password or embed it in manifests. Use your later secrets-mana
 
 The three PVCs request 20 Gi total, in addition to the application database storage. They assume the k3s `local-path` StorageClass; check with `kubectl get storageclass` and ensure there is enough disk before syncing. Local-path volumes are single-node storage, not backups or high availability. Log/metric retention is intentionally short to bound disk use.
 
+Each service has its own container memory request and limit:
+
+| Service | Request | Limit |
+| --- | ---: | ---: |
+| Prometheus | 512 Mi | 1536 Mi |
+| Loki | 384 Mi | 1536 Mi |
+| Grafana | 192 Mi | 512 Mi |
+| Alloy | 96 Mi | 256 Mi |
+| kube-state-metrics | 48 Mi | 128 Mi |
+| node-exporter (per node) | 32 Mi | 128 Mi |
+
+On a single-node cluster, these add up to about 1.24 Gi of requests and 4 Gi of limits. The namespace `ResourceQuota` is a separate aggregate backstop: 8 Gi for total memory requests and 10 Gi for total memory limits. The `LimitRange` defaults any new container without explicit memory resources to a 512 Mi limit and 128 Mi request, and rejects a container limit above 1536 Mi. These policies apply only in the `monitoring` namespace; they do not reserve 10 Gi for monitoring or limit other namespaces. Leave enough RAM for the OS, k3s, and application workloads.
+
 This is a modest single-node setup rather than the full kube-prometheus-stack chart. It scrapes Prometheus, Loki, kube-state-metrics, and node-exporter; control-plane-specific metrics and alert routing are not configured yet. Alloy has cluster-wide read access to pod metadata/log streams through a narrowly scoped ClusterRole. Keep monitoring access private and avoid writing secrets or receipt contents to application logs.
 
 Images are pinned to explicit upstream versions. They are pulled from the upstream registries referenced in the manifests; this monitoring stack does not yet mirror third-party images into GHCR.
