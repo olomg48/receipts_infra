@@ -8,6 +8,7 @@ Kustomize configuration for the single k3s cluster, with isolated `dev` and `pro
 base/                 API and frontend Deployments and Services
 overlays/dev/          Local dev image tags and in-cluster PostgreSQL
 overlays/prod/         GHCR images and external PostgreSQL
+monitoring/            Plain Kustomize manifests for Prometheus, Grafana, Loki, and Alloy
 ```
 
 The API currently only exposes liveness and PostgreSQL readiness endpoints. Receipt uploads, authentication, the processing worker, and product-review APIs are not implemented yet, so this configuration does not deploy those features.
@@ -94,3 +95,7 @@ kubectl kustomize overlays/prod
 ```
 
 NetworkPolicies and ingress are intentionally not included yet. Add and verify them after confirming the k3s CNI behavior, required DNS/API/database paths, and host-level exposure requirements.
+
+## Monitoring
+
+The [`monitoring/`](./monitoring/) Kustomize root contains Prometheus, Grafana, Loki, Alloy, and exporters as ordinary Kubernetes resources. Point an Argo CD Application at the `monitoring/` path. Follow its README to create the Grafana admin Secret first. The stack uses internal services and local-path PVCs; it does not expose a public ingress.
