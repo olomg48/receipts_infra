@@ -47,15 +47,20 @@ For node-exporter, Prometheus discovers pods in the `monitoring` namespace and s
 
 Images are pinned to explicit upstream versions. They are pulled from the upstream registries referenced in the manifests; this monitoring stack does not yet mirror third-party images into GHCR.
 
-## Access and validation
+## Ingress and validation
 
-Services are ClusterIP only. To access Grafana without an Ingress:
+The `monitoring` Ingress uses the k3s Traefik ingress class and routes:
 
-```powershell
-kubectl -n monitoring port-forward service/grafana 3000:3000
+- `grafana.local` to Grafana
+- `prometheus.local` to Prometheus
+
+Add your k3s server's reachable IP and these hostnames to the hosts file on each client device. On Windows, edit `C:\Windows\System32\drivers\etc\hosts` as Administrator; on Linux/macOS, edit `/etc/hosts`. For example:
+
+```text
+192.168.1.50 grafana.local prometheus.local
 ```
 
-Open `http://localhost:3000` and use the credentials from `grafana-admin-credentials`.
+Replace `192.168.1.50` with the server's actual LAN IP. Then open `http://grafana.local` or `http://prometheus.local`. Grafana requires the credentials from `grafana-admin-credentials`. Prometheus has no authentication configured, so restrict network access to this Ingress; a hosts-file entry only provides name resolution, not access control. Loki remains ClusterIP-only and is accessed by Grafana internally.
 
 Render the resources without applying them:
 
