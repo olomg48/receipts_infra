@@ -20,6 +20,9 @@ data:
       - job_name: node-exporter
         static_configs:
           - targets: ["node-exporter:9100"]
+        relabel_configs:
+          - target_label: instance
+            replacement: ${NODE_NAME}
 ---
 apiVersion: v1
 kind: ConfigMap
