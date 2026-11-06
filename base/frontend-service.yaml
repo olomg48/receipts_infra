@@ -6,6 +6,8 @@ metadata:
     app.kubernetes.io/name: receipt-frontend
     app.kubernetes.io/part-of: receipt-tracker
 spec:
+  imagePullSecrets:
+    - name: ghcr-secret
   type: ClusterIP
   selector:
     app.kubernetes.io/name: receipt-frontend

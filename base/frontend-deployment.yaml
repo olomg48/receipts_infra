@@ -16,6 +16,8 @@ spec:
         app.kubernetes.io/name: receipt-frontend
         app.kubernetes.io/part-of: receipt-tracker
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       containers:
         - name: frontend
           image: receipt-tracker-frontend:dev
