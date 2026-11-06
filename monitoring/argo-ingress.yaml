@@ -3,6 +3,8 @@ kind: Ingress
 metadata:
   name: argocd
   namespace: argocd
+  annotations:
+    traefik.ingress.kubernetes.io/service.server.scheme: "https"
 spec:
   ingressClassName: traefik
   rules:
