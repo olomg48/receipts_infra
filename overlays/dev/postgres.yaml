@@ -117,7 +117,7 @@ spec:
               memory: 512Mi
           volumeMounts:
             - name: data
-              mountPath: /var/lib/postgresql
+              mountPath: /var/lib/postgresql/18/data/docker
   volumeClaimTemplates:
     - metadata:
         name: data
