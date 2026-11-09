@@ -50,6 +50,10 @@ spec:
         app.kubernetes.io/part-of: receipt-tracker
     spec:
       terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
       containers:
         - name: postgres
           image: postgres:18
@@ -117,7 +121,7 @@ spec:
               memory: 512Mi
           volumeMounts:
             - name: data
-              mountPath: /var/lib/postgresql/18/data/docker
+              mountPath: /var/lib/postgresql
   volumeClaimTemplates:
     - metadata:
         name: data
