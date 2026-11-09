@@ -31,7 +31,7 @@ spec:
       targetPort: postgres
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: receipt-postgres
   labels:
@@ -58,6 +58,8 @@ spec:
             - name: postgres
               containerPort: 5432
           env:
+            - name: PGDATA
+              value: /var/lib/postgresql/18/docker
             - name: POSTGRES_DB
               valueFrom:
                 secretKeyRef:
@@ -73,6 +75,39 @@ spec:
                 secretKeyRef:
                   name: receipt-db-credentials
                   key: POSTGRES_PASSWORD
+          startupProbe:
+            exec:
+              command:
+                - pg_isready
+                - -h
+                - 127.0.0.1
+                - -p
+                - "5432"
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -h
+                - 127.0.0.1
+                - -p
+                - "5432"
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -h
+                - 127.0.0.1
+                - -p
+                - "5432"
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             requests:
               cpu: 100m
@@ -80,4 +115,16 @@ spec:
             limits:
               cpu: "1"
               memory: 512Mi
-
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 5Gi

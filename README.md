@@ -21,12 +21,12 @@ The dev overlay starts with:
 
 - Frontend: `ghcr.io/olomg48/receipt-tracker-frontend:dev`
 - API: `ghcr.io/olomg48/receipt-tracker-backend:dev`
-- PostgreSQL: `ghcr.io/olomg48/receipt-tracker-postgres:17-alpine`
-- PostgreSQL StatefulSet with a 5 Gi PVC
+- PostgreSQL: official `postgres:18` image
+- PostgreSQL StatefulSet with a 5 Gi `local-path` PVC mounted at `/var/lib/postgresql`
 
-The manual publisher in the application repo updates the application image tags to the application commit SHA and mirrors PostgreSQL 17 Alpine to GHCR. PostgreSQL uses a fixed `17-alpine` tag.
+The manual publisher in the application repo updates the application image tags to the application commit SHA. It also mirrors PostgreSQL 17 Alpine to GHCR, but the dev manifest currently uses the official PostgreSQL 18 image from Docker Hub.
 
-The dev PostgreSQL data survives pod restarts while its PVC remains. This single-node local-path storage is not a backup or high-availability solution. Verify the default StorageClass exists with `kubectl get storageclass`.
+The PostgreSQL 18 image stores its default data directory under `/var/lib/postgresql/18/docker`; the PVC is mounted at the parent `/var/lib/postgresql` path. Startup and readiness probes wait for PostgreSQL to accept connections, so an uninitialized or otherwise unavailable database is not reported as ready. The dev database data survives pod restarts while its PVC remains. This single-node local-path storage is not a backup or high-availability solution. Verify the default StorageClass exists with `kubectl get storageclass`.
 
 Create `overlays/dev/.secrets/dev-db.env` locally (the `.secrets/` directory is ignored by Git) with:
 
