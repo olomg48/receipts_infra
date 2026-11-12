@@ -37,6 +37,8 @@ metadata:
   labels:
     app.kubernetes.io/name: receipt-postgres
     app.kubernetes.io/part-of: receipt-tracker
+  annotations:
+        container.apparmor.security.beta.kubernetes.io/postgres: "unconfined"
 spec:
   serviceName: receipt-postgres-headless
   replicas: 1
@@ -49,33 +51,29 @@ spec:
         app.kubernetes.io/name: receipt-postgres
         app.kubernetes.io/part-of: receipt-tracker
     spec:
-      terminationGracePeriodSeconds: 60
       securityContext:
-        appArmorProfile:
+        seccompProfile:
           type: Unconfined
+      terminationGracePeriodSeconds: 60
       containers:
         - name: postgres
           image: postgres:18
+          securityContext:
+            allowPrivilegeEscalation: true
+            privileged: false
+            capabilities:
+              add:
+                - SYS_ADMIN
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+                - SETGID
+                - SETUID
           imagePullPolicy: IfNotPresent
-          command:
-            - /usr/bin/setpriv
-            - --reuid=999
-            - --regid=999
-            - --init-groups
-            - --inh-caps=+kill
-            - --ambient-caps=+kill
-            - --
-            - /usr/local/bin/docker-entrypoint.sh
-          args:
-            - postgres
-            - -c
-            - io_method=sync
           ports:
             - name: postgres
               containerPort: 5432
           env:
-            - name: PGDATA
-              value: /var/lib/postgresql/18/docker
             - name: POSTGRES_DB
               valueFrom:
                 secretKeyRef:
@@ -131,19 +129,6 @@ spec:
             limits:
               cpu: "2"
               memory: 1024Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-              add:
-                - KILL
-                - SETPCAP
-                - SETUID
-                - SETGID
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/postgresql
   volumeClaimTemplates:
     - metadata:
         name: data

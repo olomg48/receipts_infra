@@ -49,6 +49,7 @@ spec:
           args:
             - run
             - --storage.path=/var/lib/alloy/data
+            - --server.http.listen-addr=0.0.0.0:12345
             - /etc/alloy/config.alloy
           ports:
             - name: http
