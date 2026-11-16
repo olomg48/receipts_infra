@@ -1,0 +1,42 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: receipt-api
+  labels:
+    app.kubernetes.io/name: receipt-api
+    app.kubernetes.io/part-of: receipt-tracker
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alembic-migrations
+        app.kubernetes.io/part-of: receipt-tracker
+    spec:
+      imagePullSecrets:
+        - name: ghcr-secret
+      containers:
+        - name: alembic-migrations
+          image: receipt-tracker-backend:dev
+          imagePullPolicy: IfNotPresent
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: receipt-db-credentials
+                  key: DATABASE_URL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
