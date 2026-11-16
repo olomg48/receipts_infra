@@ -40,7 +40,7 @@ spec:
               name: admin
           volumeMounts:
             - name: garage-config-toml
-              mountPath: /etc/garage/garage.toml
+              mountPath: /etc/garage.toml
               subPath: garage.toml
           resources:
             requests:
