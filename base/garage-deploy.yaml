@@ -40,7 +40,8 @@ spec:
               name: admin
           volumeMounts:
             - name: garage-config-toml
-              mountPath: /etc/garage
+              mountPath: /etc/garage/garage.toml
+              subPath: garage.toml
           resources:
             requests:
               cpu: 25m
