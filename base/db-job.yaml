@@ -15,6 +15,7 @@ spec:
         app.kubernetes.io/name: alembic-migrations
         app.kubernetes.io/part-of: receipt-tracker
     spec:
+      restartPolicy: Never
       imagePullSecrets:
         - name: ghcr-secret
       containers:
