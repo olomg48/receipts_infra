@@ -7,3 +7,6 @@ resources:
   - frontend-deployment.yaml
   - frontend-service.yaml
   - db-job.yaml
+  - garage-deploy.yaml
+  - garage-service.yaml
+  - garage-configmap.yaml
