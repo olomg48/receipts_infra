@@ -1,0 +1,56 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: garage-init-and-create-secret
+spec:
+  template:
+    spec:
+      serviceAccountName: secret-creator-sa 
+      restartPolicy: OnFailure
+      containers:
+        - name: init-garage
+          image: alpine/k8s:1.28.2 
+          env:
+            - name: ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: garage-secrets
+                  key: GARAGE_ADMIN_TOKEN
+          command:
+          - "sh"
+          - "-c"
+          - |
+            echo "1. Waiting for Garage to start..."
+            until curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" http://receipt-garage.:3903/status | grep -q "200"; do
+              sleep 2
+            done
+
+            echo "2. Creating bucket 'receipts'..."
+            curl -s -X POST "http://receipt-garage:3903/bucket" \
+              -H "Authorization: Bearer $ADMIN_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"global_alias": "receipts"}' || true
+
+            echo "3. Generating S3 key for the application..."
+            RESPONSE=$(curl -s -X POST "http://receipt-garage:3903/key" \
+              -H "Authorization: Bearer $ADMIN_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"name": "app-receipt-key"}')
+
+            ACCESS_KEY=$(echo "$RESPONSE" | jq -r '.access_key_id')
+            SECRET_KEY=$(echo "$RESPONSE" | jq -r '.secret_key')
+
+            if [ "$ACCESS_KEY" = "null" ] || [ -z "$ACCESS_KEY" ]; then
+              echo "Error: Failed to retrieve keys from Garage!"
+              echo "Server response: $RESPONSE"
+              exit 1
+            fi
+
+            echo "4. Creating/updating Kubernetes Secret with generated data..."
+            kubectl create secret generic garage-s3-credentials \
+              --namespace=receipt-dev \
+              --from-literal=AWS_ACCESS_KEY_ID="$ACCESS_KEY" \
+              --from-literal=AWS_SECRET_ACCESS_KEY="$SECRET_KEY" \
+              --dry-run=client -o yaml | kubectl apply -f -
+
+            echo "Success! Secret 'garage-s3-credentials' has been successfully created/updated."

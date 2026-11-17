@@ -10,3 +10,5 @@ resources:
   - garage-deploy.yaml
   - garage-service.yaml
   - garage-configmap.yaml
+  - garage-init-job.yaml
+  - rbac.yaml
