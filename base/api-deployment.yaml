@@ -33,7 +33,7 @@ spec:
                   key: DATABASE_URL
             - name: S3_ENDPOINT_URL
               value: http://receipt-garage:3900
-              
+
             - name: S3_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
@@ -46,6 +46,8 @@ spec:
                   key: AWS_SECRET_ACCESS_KEY
             - name: S3_BUCKET
               value: receipts-bucket
+            - name: S3_REGION
+              value: garage
           livenessProbe:
             httpGet:
               path: /health/live

@@ -32,8 +32,6 @@ spec:
                 secretKeyRef:
                   name: garage-secrets
                   key: GARAGE_ADMIN_TOKEN
-            - name: S3_REGION
-              value: garage
           ports:
             - containerPort: 3900
               name: s3
