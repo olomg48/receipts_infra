@@ -31,7 +31,7 @@ spec:
               curl -s -X POST "http://receipt-garage:3903/v2/CreateBucket" \
                 -H "Authorization: Bearer $ADMIN_TOKEN" \
                 -H "Content-Type: application/json" \
-                -d '{"globalAlias": "receipts"}' || true
+                -d '{"globalAlias": "receipts-bucket"}' || true
 
               echo "3. Generating S3 key for the application..."
               RESPONSE=$(curl -s -X POST "http://receipt-garage:3903/v2/CreateKey" \
@@ -52,7 +52,7 @@ spec:
               curl -s -X POST "http://receipt-garage:3903/v2/AllowBucketKey" \
                 -H "Authorization: Bearer $ADMIN_TOKEN" \
                 -H "Content-Type: application/json" \
-                -d "{\"accessKeyId\": \"$ACCESS_KEY\", \"bucketId\": \"receipts\", \"permissions\": {\"read\": true, \"write\": true}}" || true
+                -d "{\"accessKeyId\": \"$ACCESS_KEY\", \"bucketId\": \"receipts-bucket\", \"permissions\": {\"read\": true, \"write\": true}}" || true
 
               echo "4. Creating/updating Kubernetes Secret with generated data..."
               kubectl create secret generic garage-s3-credentials \

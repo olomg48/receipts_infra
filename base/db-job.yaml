@@ -7,7 +7,6 @@ metadata:
     app.kubernetes.io/part-of: receipt-tracker
   annotations:
     argocd.argoproj.io/hook: PreSync
-    argocd.argoproj.io/hook-delete-policy: HookSucceeded
 spec:
   template:
     metadata:
