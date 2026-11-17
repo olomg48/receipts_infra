@@ -8,9 +8,9 @@ data:
     metadata_dir = "/var/lib/garage/meta"
     data_dir = "/var/lib/garage/data"
     db_engine = "sqlite"
-    replication_factor = 1
+    replication_factor = 3
     rpc_bind_addr = "[::]:3901"
-    rpc_public_addr = "0.0.0.0:3901"
+    rpc_subnet = "10.42.0.0/16"
     [s3_api]
     s3_region = "garage"
     api_bind_addr = "[::]:3900"
