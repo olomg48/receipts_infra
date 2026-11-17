@@ -19,40 +19,46 @@ spec:
                   name: garage-secrets
                   key: GARAGE_ADMIN_TOKEN
           command:
-          - "sh"
-          - "-c"
-          - |
-            echo "1. Waiting for Garage to start..."
-            until curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" http://receipt-garage:3903/health | grep -q "200"; do
-              sleep 2
-            done
+            - "sh"
+            - "-c"
+            - |
+              echo "1. Waiting for Garage to start..."
+              until curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" http://receipt-garage:3903/health | grep -q "200"; do
+                sleep 2
+              done
 
-            echo "2. Creating bucket 'receipts'..."
-            curl -s -X POST "http://receipt-garage:3903/bucket" \
-              -H "Authorization: Bearer $ADMIN_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"global_alias": "receipts"}' || true
+              echo "2. Creating bucket 'receipts'..."
+              curl -s -X POST "http://receipt-garage:3903/v2/CreateBucket" \
+                -H "Authorization: Bearer $ADMIN_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d '{"globalAlias": "receipts"}' || true
 
-            echo "3. Generating S3 key for the application..."
-            RESPONSE=$(curl -s -X POST "http://receipt-garage:3903/key" \
-              -H "Authorization: Bearer $ADMIN_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"name": "app-receipt-key"}')
+              echo "3. Generating S3 key for the application..."
+              RESPONSE=$(curl -s -X POST "http://receipt-garage:3903/v2/CreateKey" \
+                -H "Authorization: Bearer $ADMIN_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d '{"name": "app-receipt-key"}')
 
-            ACCESS_KEY=$(echo "$RESPONSE" | jq -r '.access_key_id')
-            SECRET_KEY=$(echo "$RESPONSE" | jq -r '.secret_key')
+              ACCESS_KEY=$(echo "$RESPONSE" | jq -r '.accessKeyId')
+              SECRET_KEY=$(echo "$RESPONSE" | jq -r '.secretKey')
 
-            if [ "$ACCESS_KEY" = "null" ] || [ -z "$ACCESS_KEY" ]; then
-              echo "Error: Failed to retrieve keys from Garage!"
-              echo "Server response: $RESPONSE"
-              exit 1
-            fi
+              if [ "$ACCESS_KEY" = "null" ] || [ -z "$ACCESS_KEY" ]; then
+                echo "Error: Failed to retrieve keys from Garage!"
+                echo "Server response: $RESPONSE"
+                exit 1
+              fi
 
-            echo "4. Creating/updating Kubernetes Secret with generated data..."
-            kubectl create secret generic garage-s3-credentials \
-              --namespace=receipt-dev \
-              --from-literal=AWS_ACCESS_KEY_ID="$ACCESS_KEY" \
-              --from-literal=AWS_SECRET_ACCESS_KEY="$SECRET_KEY" \
-              --dry-run=client -o yaml | kubectl apply -f -
+              echo "3.1. Allowing key access to bucket..."
+              curl -s -X POST "http://receipt-garage:3903/v2/AllowBucketKey" \
+                -H "Authorization: Bearer $ADMIN_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{\"accessKeyId\": \"$ACCESS_KEY\", \"bucketId\": \"receipts\", \"permissions\": {\"read\": true, \"write\": true}}" || true
 
-            echo "Success! Secret 'garage-s3-credentials' has been successfully created/updated."
+              echo "4. Creating/updating Kubernetes Secret with generated data..."
+              kubectl create secret generic garage-s3-credentials \
+                --namespace=receipt-dev \
+                --from-literal=AWS_ACCESS_KEY_ID="$ACCESS_KEY" \
+                --from-literal=AWS_SECRET_ACCESS_KEY="$SECRET_KEY" \
+                --dry-run=client -o yaml | kubectl apply -f -
+
+              echo "Success! Secret 'garage-s3-credentials' has been successfully created/updated."
