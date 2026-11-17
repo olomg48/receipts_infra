@@ -3,7 +3,6 @@ kind: Job
 metadata:
   name: garage-init-and-create-secret
   annotations:
-    argocd.argoproj.io/hook: PreSync
     argocd.argoproj.io/hook-delete-policy: HookSucceeded
 spec:
   template:
