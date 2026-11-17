@@ -18,54 +18,142 @@ spec:
                 secretKeyRef:
                   name: garage-secrets
                   key: GARAGE_ADMIN_TOKEN
+            - name: APP_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           command:
             - "sh"
             - "-c"
             - |
-              echo "1. Waiting for Garage to start..."
-              until curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" http://receipt-garage:3903/health | grep -q "200"; do
+              set -eu
+
+              GARAGE_ADMIN_URL="http://receipt-garage:3903"
+              BUCKET_ALIAS="receipts-bucket"
+              KEY_NAME="app-receipt-key"
+
+              for command_name in curl jq kubectl base64 tr; do
+                if ! command -v "$command_name" >/dev/null 2>&1; then
+                  echo "Required command is missing: $command_name" >&2
+                  exit 1
+                fi
+              done
+
+              echo "Waiting for Garage to become healthy..."
+              attempt=0
+              until curl -fsS "$GARAGE_ADMIN_URL/health" >/dev/null 2>&1; do
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 60 ]; then
+                  echo "Garage did not become healthy within 120 seconds." >&2
+                  exit 1
+                fi
                 sleep 2
               done
 
-              echo "2. Creating bucket 'receipts'..."
-              BUCKET_RESPONSE=$(curl -s -X POST "http://receipt-garage:3903/v2/CreateBucket" \
-                -H "Authorization: Bearer $ADMIN_TOKEN" \
-                -H "Content-Type: application/json" \
-                -d '{"globalAlias": "receipts-bucket"}')
+              garage_get() {
+                curl -fsS \
+                  -H "Authorization: Bearer $ADMIN_TOKEN" \
+                  "$GARAGE_ADMIN_URL/v2/$1"
+              }
 
-              BUCKET_ID=$(echo "$BUCKET_RESPONSE" | jq -r '.id')
+              garage_post() {
+                curl -fsS -X POST \
+                  -H "Authorization: Bearer $ADMIN_TOKEN" \
+                  -H "Content-Type: application/json" \
+                  --data "$2" \
+                  "$GARAGE_ADMIN_URL/v2/$1"
+              }
+
+              echo "Checking for Garage bucket '$BUCKET_ALIAS'..."
+              BUCKETS_JSON=$(garage_get "ListBuckets")
+              BUCKET_ID=$(printf '%s' "$BUCKETS_JSON" | jq -r --arg alias "$BUCKET_ALIAS" '
+                [.[] | select(.globalAliases | index($alias))] |
+                if length == 0 then ""
+                elif length == 1 then .[0].id
+                else error("multiple buckets have the configured alias")
+                end
+              ')
 
               if [ -z "$BUCKET_ID" ] || [ "$BUCKET_ID" = "null" ]; then
-                # If the bucket already exists, Garage might return an error or you can fetch it. 
-                # For safety, let's make sure we handle it if BUCKET_ID is empty.
-                echo "Bucket creation response: $BUCKET_RESPONSE"
+                echo "Creating Garage bucket '$BUCKET_ALIAS'..."
+                BUCKET_RESPONSE=$(garage_post "CreateBucket" \
+                  "$(jq -cn --arg alias "$BUCKET_ALIAS" '{globalAlias: $alias}')")
+                BUCKET_ID=$(printf '%s' "$BUCKET_RESPONSE" | jq -er \
+                  '.id | select(type == "string" and length > 0)') || {
+                    echo "Garage did not return an ID for the created bucket." >&2
+                    exit 1
+                  }
               fi
 
-              echo "3. Generating S3 key for the application..."
-              RESPONSE=$(curl -s -X POST "http://receipt-garage:3903/v2/CreateKey" \
-                -H "Authorization: Bearer $ADMIN_TOKEN" \
-                -H "Content-Type: application/json" \
-                -d '({"name": "app-receipt-key"}')
+              echo "Checking for active Garage key '$KEY_NAME'..."
+              KEYS_JSON=$(garage_get "ListKeys")
+              MATCHING_KEYS=$(printf '%s' "$KEYS_JSON" | jq -c --arg name "$KEY_NAME" '
+                [.[] | select(.name == $name and .expired == false)]
+              ')
+              KEY_COUNT=$(printf '%s' "$MATCHING_KEYS" | jq -r 'length')
 
-              ACCESS_KEY=$(echo "$RESPONSE" | jq -r '.accessKeyId')
-              SECRET_KEY=$(echo "$RESPONSE" | jq -r '.secretAccessKey')
+              case "$KEY_COUNT" in
+                0)
+                  echo "Creating Garage key '$KEY_NAME'..."
+                  KEY_INFO=$(garage_post "CreateKey" \
+                    "$(jq -cn --arg name "$KEY_NAME" '{name: $name}')")
+                  ;;
+                1)
+                  ACCESS_KEY_ID=$(printf '%s' "$MATCHING_KEYS" | jq -er '.[0].id')
+                  echo "Reusing existing Garage key '$KEY_NAME'..."
+                  KEY_INFO=$(curl -fsS --get \
+                    -H "Authorization: Bearer $ADMIN_TOKEN" \
+                    --data-urlencode "id=$ACCESS_KEY_ID" \
+                    --data-urlencode "showSecretKey=true" \
+                    "$GARAGE_ADMIN_URL/v2/GetKeyInfo")
+                  ;;
+                *)
+                  echo "More than one active Garage key is named '$KEY_NAME'; refusing to choose one." >&2
+                  exit 1
+                  ;;
+              esac
 
-              if [ "$ACCESS_KEY" = "null" ] || [ -z "$ACCESS_KEY" ] || [ "$SECRET_KEY" = "null" ] || [ -z "$SECRET_KEY" ]; then
-                echo "Error: Failed to retrieve keys from Garage!"
-                echo "Server response: $RESPONSE"
-                exit 1
-              fi
+              ACCESS_KEY_ID=$(printf '%s' "$KEY_INFO" | jq -er \
+                '.accessKeyId | select(type == "string" and length > 0)') || {
+                  echo "Garage did not return an access key ID." >&2
+                  exit 1
+                }
+              SECRET_ACCESS_KEY=$(printf '%s' "$KEY_INFO" | jq -er \
+                '.secretAccessKey | select(type == "string" and length > 0)') || {
+                  echo "Garage did not return the key secret; refusing to write incomplete credentials." >&2
+                  exit 1
+                }
 
-              echo "3.1. Allowing key access to bucket..."
-              curl -s -X POST "http://receipt-garage:3903/v2/AllowBucketKey" \
-                -H "Authorization: Bearer $ADMIN_TOKEN" \
-                -H "Content-Type: application/json" \
-                -d "{\"accessKeyId\": \"$ACCESS_KEY\", \"bucketId\": \"$BUCKET_ID\", \"permissions\": {\"read\": true, \"write\": true}}" || true
-              
-              echo "4. Creating/updating Kubernetes Secret with generated data..."
-              kubectl create secret generic garage-s3-credentials \
-                --namespace=receipt-dev \
-                --from-literal=AWS_ACCESS_KEY_ID="$ACCESS_KEY" \
-                --from-literal=AWS_SECRET_ACCESS_KEY="$SECRET_KEY" \
-                --dry-run=client -o yaml | kubectl apply -f -
-              echo "Success! Secret 'garage-s3-credentials' has been successfully created/updated."
+              echo "Granting read/write access to the application bucket..."
+              ALLOW_RESPONSE=$(garage_post "AllowBucketKey" \
+                "$(jq -cn \
+                  --arg accessKeyId "$ACCESS_KEY_ID" \
+                  --arg bucketId "$BUCKET_ID" \
+                  '{accessKeyId: $accessKeyId, bucketId: $bucketId, permissions: {read: true, write: true}}')")
+              printf '%s' "$ALLOW_RESPONSE" | jq -e \
+                --arg accessKeyId "$ACCESS_KEY_ID" \
+                '[.keys[] | select(.accessKeyId == $accessKeyId and .permissions.read == true and .permissions.write == true)] | length == 1' \
+                >/dev/null || {
+                  echo "Garage did not confirm read/write access for the application key." >&2
+                  exit 1
+                }
+
+              echo "Writing S3 credentials to Kubernetes Secret..."
+              ACCESS_KEY_ID_B64=$(printf '%s' "$ACCESS_KEY_ID" | base64 | tr -d '\n')
+              SECRET_ACCESS_KEY_B64=$(printf '%s' "$SECRET_ACCESS_KEY" | base64 | tr -d '\n')
+              BUCKET_ALIAS_B64=$(printf '%s' "$BUCKET_ALIAS" | base64 | tr -d '\n')
+              kubectl apply -f - <<EOF
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: garage-s3-credentials
+                namespace: ${APP_NAMESPACE}
+              type: Opaque
+              data:
+                AWS_ACCESS_KEY_ID: ${ACCESS_KEY_ID_B64}
+                AWS_SECRET_ACCESS_KEY: ${SECRET_ACCESS_KEY_B64}
+                S3_BUCKET: ${BUCKET_ALIAS_B64}
+              EOF
+
+              unset SECRET_ACCESS_KEY KEY_INFO SECRET_ACCESS_KEY_B64
+              echo "Garage bucket and application credentials are ready."
