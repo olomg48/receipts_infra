@@ -20,6 +20,7 @@ spec:
         - name: garage
           image: dxflrs/garage:d2680ba964fee087f52f2ab231e1ff47848b4ca4
           imagePullPolicy: IfNotPresent
+          command: ["garage", "server", "--single-node"]
           env:
             - name: GARAGE_RPC_SECRET
               valueFrom:
