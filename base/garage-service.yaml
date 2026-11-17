@@ -8,7 +8,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    app:  receipt-garage
+    app.kubernetes.io/name: receipt-garage
   ports:
     - port: 3900
       targetPort: 3900
