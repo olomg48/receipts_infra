@@ -28,16 +28,24 @@ spec:
               done
 
               echo "2. Creating bucket 'receipts'..."
-              curl -s -X POST "http://receipt-garage:3903/v2/CreateBucket" \
+              BUCKET_RESPONSE=$(curl -s -X POST "http://receipt-garage:3903/v2/CreateBucket" \
                 -H "Authorization: Bearer $ADMIN_TOKEN" \
                 -H "Content-Type: application/json" \
-                -d '{"globalAlias": "receipts-bucket"}' || true
+                -d '{"globalAlias": "receipts-bucket"}')
+
+              BUCKET_ID=$(echo "$BUCKET_RESPONSE" | jq -r '.id')
+
+              if [ -z "$BUCKET_ID" ] || [ "$BUCKET_ID" = "null" ]; then
+                # If the bucket already exists, Garage might return an error or you can fetch it. 
+                # For safety, let's make sure we handle it if BUCKET_ID is empty.
+                echo "Bucket creation response: $BUCKET_RESPONSE"
+              fi
 
               echo "3. Generating S3 key for the application..."
               RESPONSE=$(curl -s -X POST "http://receipt-garage:3903/v2/CreateKey" \
                 -H "Authorization: Bearer $ADMIN_TOKEN" \
                 -H "Content-Type: application/json" \
-                -d '{"name": "app-receipt-key"}')
+                -d '({"name": "app-receipt-key"}')
 
               ACCESS_KEY=$(echo "$RESPONSE" | jq -r '.accessKeyId')
               SECRET_KEY=$(echo "$RESPONSE" | jq -r '.secretAccessKey')
@@ -52,13 +60,12 @@ spec:
               curl -s -X POST "http://receipt-garage:3903/v2/AllowBucketKey" \
                 -H "Authorization: Bearer $ADMIN_TOKEN" \
                 -H "Content-Type: application/json" \
-                -d "{\"accessKeyId\": \"$ACCESS_KEY\", \"bucketId\": \"receipts-bucket\", \"permissions\": {\"read\": true, \"write\": true}}" || true
-
+                -d "{\"accessKeyId\": \"$ACCESS_KEY\", \"bucketId\": \"$BUCKET_ID\", \"permissions\": {\"read\": true, \"write\": true}}" || true
+              
               echo "4. Creating/updating Kubernetes Secret with generated data..."
               kubectl create secret generic garage-s3-credentials \
                 --namespace=receipt-dev \
                 --from-literal=AWS_ACCESS_KEY_ID="$ACCESS_KEY" \
                 --from-literal=AWS_SECRET_ACCESS_KEY="$SECRET_KEY" \
                 --dry-run=client -o yaml | kubectl apply -f -
-
               echo "Success! Secret 'garage-s3-credentials' has been successfully created/updated."
