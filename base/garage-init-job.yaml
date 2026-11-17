@@ -23,7 +23,7 @@ spec:
           - "-c"
           - |
             echo "1. Waiting for Garage to start..."
-            until curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" http://receipt-garage:3903/status | grep -q "200"; do
+            until curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ADMIN_TOKEN" http://receipt-garage:3903/health | grep -q "200"; do
               sleep 2
             done
 
