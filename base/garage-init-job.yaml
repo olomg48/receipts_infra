@@ -40,9 +40,9 @@ spec:
                 -d '{"name": "app-receipt-key"}')
 
               ACCESS_KEY=$(echo "$RESPONSE" | jq -r '.accessKeyId')
-              SECRET_KEY=$(echo "$RESPONSE" | jq -r '.secretKey')
+              SECRET_KEY=$(echo "$RESPONSE" | jq -r '.secretAccessKey')
 
-              if [ "$ACCESS_KEY" = "null" ] || [ -z "$ACCESS_KEY" ]; then
+              if [ "$ACCESS_KEY" = "null" ] || [ -z "$ACCESS_KEY" ] || [ "$SECRET_KEY" = "null" ] || [ -z "$SECRET_KEY" ]; then
                 echo "Error: Failed to retrieve keys from Garage!"
                 echo "Server response: $RESPONSE"
                 exit 1
