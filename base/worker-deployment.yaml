@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: receipt-api
+  name: receipt-worker
   labels:
     app.kubernetes.io/name: receipt-worker
     app.kubernetes.io/part-of: receipt-tracker
