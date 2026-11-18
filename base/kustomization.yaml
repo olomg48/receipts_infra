@@ -12,3 +12,4 @@ resources:
   - garage-configmap.yaml
   - garage-init-job.yaml
   - rbac.yaml
+  - worker-deployment.yaml
