@@ -48,7 +48,7 @@ spec:
             - name: S3_REGION
               value: garage
             - name: PUBLIC_APP_ORIGIN
-              value: http://receipts.local
+              value: http://receipts.dev.local
           livenessProbe:
             httpGet:
               path: /health/live
