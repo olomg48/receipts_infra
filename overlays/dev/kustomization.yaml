@@ -12,7 +12,7 @@ resources:
 images:
   - name: receipt-tracker-backend
     newName: ghcr.io/olomg48/receipt-tracker-backend
-    newTag: 196252c78ded7a2e22a44b655089aa150f700640
+    newTag: 2f5396a87f582a5b007415eee67951b275eb29fb
   - name: receipt-tracker-frontend
     newName: ghcr.io/olomg48/receipt-tracker-frontend
-    newTag: 196252c78ded7a2e22a44b655089aa150f700640
+    newTag: 2f5396a87f582a5b007415eee67951b275eb29fb
