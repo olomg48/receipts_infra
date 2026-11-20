@@ -1,101 +1,184 @@
-# Receipt Tracker Kubernetes configuration
+# Receipt Tracker Infrastructure
 
-Kustomize configuration for the single k3s cluster, with isolated `dev` and `prod` namespaces.
+Infrastructure-as-code for a personal receipt-tracking application running on a Proxmox-backed k3s cluster. The repository demonstrates VM provisioning with Terraform, cluster bootstrap with Ansible, Kubernetes deployments with Kustomize, GitOps reconciliation with Argo CD, and a self-hosted monitoring stack.
 
-## Layout
+The application source is in [olomg48/receipts](https://github.com/olomg48/receipts). Its [architecture summary](https://github.com/olomg48/receipts/blob/main/ARCHITECTURE-SUMMARY.md) describes the application design and processing workflow.
+
+> **AI authorship disclosure:** The application is almost entirely AI-generated. This portfolio project focuses on infrastructure and DevOps; the application provides the system being deployed. This README was AI-generated.
+
+> **Project status:** This is a homelab/CV project, not a hardened public service. The app has no user authentication, current ingresses use HTTP, Prometheus is unauthenticated, and the Garage deployment does not yet have persistent storage. See [Current limitations](#current-limitations) before using it with data you need to keep or exposing it beyond a trusted network.
+
+## Architecture
 
 ```text
-base/                 API and frontend Deployments and Services
-overlays/dev/          Local dev image tags and in-cluster PostgreSQL
-overlays/prod/         GHCR images and external PostgreSQL
-monitoring/            Plain Kustomize manifests for Prometheus, Grafana, Loki, and Alloy
+Proxmox host
+  └─ Terraform provisions three VMs (one master, two workers)
+       └─ Ansible installs and joins k3s
+            ├─ Argo CD (installed separately; this repo supplies an ingress)
+            ├─ receipt-dev namespace
+            │    ├─ Frontend, API, worker, Garage, migrations
+            │    └─ PostgreSQL 18 for development
+            ├─ receipt-prod namespace
+            │    ├─ Frontend, API, worker, Garage, migrations
+            │    └─ External PostgreSQL SaaS
+            └─ monitoring namespace
+                 ├─ Prometheus, Grafana, Loki, Alloy
+                 └─ kube-state-metrics, node-exporter
+
+Browser
+  └─ Traefik Ingress (currently HTTP)
+       └─ React frontend / Nginx
+            └─ /api proxy ──> FastAPI API ──> PostgreSQL
+                                    └───────> Garage (S3-compatible)
+
+PostgreSQL receipt job queue ──> Python worker
+                                  ├─ reads/writes receipt artifacts in Garage
+                                  └─ Mistral OCR, then Mistral LLM extraction
 ```
 
-The API currently only exposes liveness and PostgreSQL readiness endpoints. Receipt uploads, authentication, the processing worker, and product-review APIs are not implemented yet, so this configuration does not deploy those features.
+Terraform currently describes three VMs, each configured with 2 vCPUs and 4 GiB of RAM. The application architecture document records a 16 GiB, 4-core host, so those VM definitions allocate 6 vCPUs and 12 GiB before Proxmox and host overhead. Treat these as VM settings, not a guarantee of physical capacity, and watch for CPU overcommit and memory pressure when running the full stack.
 
-No ingress is configured; the frontend and API are internal ClusterIP Services. Add an Ingress and HTTPS after choosing hostnames and an ingress/TLS setup.
+### Application components
 
-## Dev environment
+- **Frontend:** React and TypeScript, served by Nginx. Nginx serves the single-page app and proxies `/api/` requests to the API service.
+- **API:** FastAPI handles receipt uploads and history/details, product-code review, analytics, health checks, and failed-job reprocessing.
+- **Worker:** A separate process from the same backend image. It claims durable jobs from PostgreSQL, runs OCR and structured extraction through Mistral, validates results, and stores artifacts in Garage.
+- **PostgreSQL:** Development uses an in-cluster PostgreSQL StatefulSet. The production overlay expects an external PostgreSQL service and does not deploy a database.
+- **Garage:** S3-compatible storage for private receipt files and processing artifacts. The current base deploys a single Garage pod.
+- **BI:** The app has an Insights view. Metabase is not deployed by this repository; it remains a possible later addition.
 
-The dev overlay starts with:
+There is no application login or per-user data separation. Any client that can reach the app can view and modify its receipt data. Keep access restricted to trusted devices/networks.
 
-- Frontend: `ghcr.io/olomg48/receipt-tracker-frontend:dev`
-- API: `ghcr.io/olomg48/receipt-tracker-backend:dev`
-- PostgreSQL: official `postgres:18` image
-- PostgreSQL StatefulSet with a 5 Gi `local-path` PVC mounted at `/var/lib/postgresql`
+## Repository layout
 
-The manual publisher in the application repo updates the application image tags to the application commit SHA. It also mirrors PostgreSQL 17 Alpine to GHCR, but the dev manifest currently uses the official PostgreSQL 18 image from Docker Hub.
-
-The PostgreSQL 18 image stores its default data directory under `/var/lib/postgresql/18/docker`; the PVC is mounted at the parent `/var/lib/postgresql` path. The dev pod runs as the image's `postgres` user with synchronous I/O and an unconfined AppArmor profile. The profile is needed because the cluster's default AppArmor profile blocks the image's temporary initialization server from shutting down. This exception is limited to the disposable dev database; production uses external PostgreSQL. Startup and readiness probes wait for PostgreSQL to accept connections, so an uninitialized or otherwise unavailable database is not reported as ready. The dev database data survives pod restarts while its PVC remains. This single-node local-path storage is not a backup or high-availability solution. Verify the default StorageClass exists with `kubectl get storageclass`.
-
-Create `overlays/dev/.secrets/dev-db.env` locally (the `.secrets/` directory is ignored by Git) with:
-
-```dotenv
-POSTGRES_DB=receipts
-POSTGRES_USER=receipt_app
-POSTGRES_PASSWORD=replace-with-a-strong-password
-DATABASE_URL=postgresql+psycopg://receipt_app:replace-with-a-strong-password@receipt-postgres:5432/receipts
+```text
+terraform/                  Proxmox provider config and reusable VM module
+ansible/                    k3s master/worker inventory and bootstrap playbook
+base/                       Shared app Deployments, Services, Garage, RBAC, migration Job
+overlays/dev/               Dev namespace, in-cluster PostgreSQL, dev ingress and image tags
+overlays/prod/              Prod namespace and production image tags
+monitoring/                 Monitoring workloads, ingress, configuration and resource policies
 ```
 
-URL-encode special characters in the password used in `DATABASE_URL`. Then create the Secret before syncing the overlay:
+Kustomize is used to compose a shared application base with environment overlays. The monitoring stack is a separate Kustomize root. The `base/` directory is included through an overlay and is not intended to be deployed on its own.
+
+## Terraform and Ansible
+
+Terraform uses the `bpg/proxmox` provider and a reusable `terraform/modules/proxmox_vm` module. The current configuration clones three VMs from a Proxmox template and outputs their IP addresses. Supply the Proxmox API token through a local, ignored variable file or the `TF_VAR_token` environment variable; never commit credentials or state.
+
+Ansible bootstraps k3s on the master, reads the k3s node token there, and joins the two workers. The inventory and provider currently contain environment-specific settings. Review those values and the security notes below before publishing or reusing this configuration.
+
+Example checks:
 
 ```powershell
-kubectl create namespace receipt-dev --dry-run=client -o yaml | kubectl apply -f -
-kubectl create secret generic receipt-db-credentials `
-  --namespace receipt-dev `
-  --from-env-file overlays/dev/.secrets/dev-db.env `
-  --dry-run=client -o yaml | kubectl apply -f -
+terraform -chdir=terraform init
+terraform -chdir=terraform validate
+ansible-playbook -i ansible/hosts ansible/main.yaml --syntax-check
 ```
 
-Do not commit that file or pass real secret values on a command line in a shared environment.
+Provisioning VMs or installing k3s is intentionally not part of the application deployment workflow.
 
-Apply with:
+## Kustomize environments
 
-```sh
-kubectl apply -k overlays/dev
-kubectl -n receipt-dev get pods,services,pvc
-```
+### Development
 
-For a GitOps-first setup, install Argo CD once, then create an Argo CD Application pointing to this repository's `overlays/dev` path. Use `kubectl apply -k` only as a temporary smoke test; let Argo CD own ongoing changes. With no Ingress, access the UI temporarily with:
+`overlays/dev` composes `base/` with:
 
-```sh
-kubectl -n receipt-dev port-forward service/receipt-frontend 8080:80
-```
+- Namespace `receipt-dev`.
+- PostgreSQL 18 as a single-replica StatefulSet with a 5 Gi `local-path` PVC.
+- A Traefik Ingress for `receipts.dev.local`, routed to the frontend.
+- GHCR image references pinned to an application commit.
 
-Then open `http://localhost:8080`.
+The API and worker use the PostgreSQL Secret and Garage credentials in the same namespace. The dev database PVC survives pod restarts while the claim and node remain available; it is not a backup or HA solution.
 
-## Prod environment
+### Production
 
-The prod overlay does not include PostgreSQL. It expects a pre-created Secret named `receipt-db-credentials` in namespace `receipt-prod`, with a `DATABASE_URL` key containing the external PostgreSQL SQLAlchemy URL. Configure TLS in the URL/provider connection settings. Do not put credentials in this repository.
+`overlays/prod` composes `base/` in namespace `receipt-prod` and expects an external PostgreSQL connection. It does not currently define a production Ingress or TLS configuration. Its image tags are placeholders until a release workflow updates them.
 
-The manual publisher in the application repo updates both prod image tags to the application commit SHA. The frontend/backend images are published to GHCR under:
+Do not treat the current prod overlay as internet-ready. Configure its public origin, ingress/TLS, network access, and required runtime Secrets before deploying it.
 
-```text
-ghcr.io/olomg48/receipt-tracker-backend
-ghcr.io/olomg48/receipt-tracker-frontend
-```
+### Render manifests
 
-Make GHCR packages public to pull without credentials, or add an `imagePullSecrets` reference and a pre-created registry Secret in `receipt-prod`. Do not enable automatic deployment from a mutable `latest` tag.
+Render each root without applying it:
 
-Apply with:
-
-```sh
-kubectl apply -k overlays/prod
-```
-
-Do not sync prod until the workflow has published the images and the database Secret is configured. The PostgreSQL migration is not currently an Argo CD hook; add a one-shot migration Job after the API schema and migration flow are ready.
-
-## Kustomize validation
-
-Render without applying:
-
-```sh
+```powershell
 kubectl kustomize overlays/dev
 kubectl kustomize overlays/prod
+kubectl kustomize monitoring
 ```
 
-NetworkPolicies and ingress are intentionally not included yet. Add and verify them after confirming the k3s CNI behavior, required DNS/API/database paths, and host-level exposure requirements.
+The app Deployment manifests reference a `ghcr-secret` image pull Secret. Create it in each app namespace when required by package visibility, or adjust the manifests for anonymous pulls from public GHCR packages.
 
-## Monitoring
+## Argo CD and deployment flow
 
-The [`monitoring/`](./monitoring/) Kustomize root contains Prometheus, Grafana, Loki, Alloy, and exporters as ordinary Kubernetes resources. Point an Argo CD Application at the `monitoring/` path. Follow its README to create the Grafana admin Secret first. The stack uses internal services and local-path PVCs; it does not expose a public ingress.
+Argo CD is expected to manage ongoing changes, but its installation and Argo CD `Application` resources are **not** defined in this repository. Install Argo CD separately, then create Applications that point to:
+
+| Argo CD Application | Repository path | Namespace |
+| --- | --- | --- |
+| Receipt development | `overlays/dev` | `receipt-dev` |
+| Receipt production | `overlays/prod` | `receipt-prod` |
+| Monitoring | `monitoring` | `monitoring` |
+
+`monitoring/argo-ingress.yaml` provides an HTTP Traefik route for `argo.local` to an already-installed `argocd-server` Service. It does not install or configure Argo CD itself.
+
+The database migration Job in `base/db-job.yaml` is an Argo CD `PreSync` hook. It runs Alembic migrations with the application image before the updated application resources are applied.
+
+The application repository has a manually dispatched GitHub Actions workflow. It tests the backend, builds and publishes the frontend/backend images to GHCR using the application commit SHA, then commits the selected environment's image-tag update to this repository. The workflow needs an `INFRA_REPO_TOKEN` secret with permission to push to the infrastructure repository. Argo CD reconciles the changed overlay according to its Application sync policy.
+
+Use `kubectl apply -k` only for a deliberate local smoke test; avoid using it as a second controller for resources Argo CD owns.
+
+## Secrets and configuration
+
+No runtime credential values should be committed to this repository. The Kubernetes Secrets below must be created out of band in the namespace where the corresponding workloads run:
+
+| Secret | Namespace | Required data / purpose |
+| --- | --- | --- |
+| `receipt-db-credentials` | `receipt-dev` | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `DATABASE_URL` for the dev PostgreSQL instance |
+| `receipt-db-credentials` | `receipt-prod` | `DATABASE_URL` for the external PostgreSQL service; use the provider's TLS settings |
+| `garage-secrets` | Each app namespace | `GARAGE_RPC_SECRET` and `GARAGE_ADMIN_TOKEN` for Garage |
+| `garage-s3-credentials` | Each app namespace | Generated by the Garage initialization Job; app-specific S3 access key and secret |
+| `receipt-mistral-credentials` | Each app namespace | `MISTRAL_API_KEY` for the worker |
+| `ghcr-secret` | Each app namespace | Image pull credentials when GHCR packages are private |
+| `grafana-admin-credentials` | `monitoring` | `admin-user` and `admin-password` for Grafana |
+
+The Garage initialization Job uses the admin token to create or reuse the private receipt bucket and an app key, grants that key access to the bucket, then writes the generated S3 credentials to `garage-s3-credentials`. Its service account is limited to managing Secrets in its namespace.
+
+For a personal cluster, provision Secrets with a secure local process before syncing the relevant Argo CD Application. Kubernetes Secret manifests are not encrypted merely because their values are base64 encoded. This repository does not currently configure SOPS, Sealed Secrets, External Secrets, or another encrypted GitOps secret workflow. Do not put secret values in Git, CI logs, command history, or this README.
+
+`PUBLIC_APP_ORIGIN` is a non-secret browser-origin setting, not authentication. It must match the browser-facing origin. The current base value is for the dev hostname; override it for any other environment.
+
+## Monitoring stack
+
+The `monitoring/` Kustomize root deploys a lightweight, single-cluster observability stack:
+
+- **Prometheus:** scrapes Prometheus, Loki, kube-state-metrics, and node-exporter; 7-day retention and an 8 Gi PVC.
+- **Grafana:** provisioned Prometheus and Loki data sources; 2 Gi PVC; admin credentials come from a Secret.
+- **Loki:** single-process filesystem storage with 7-day retention and a 10 Gi PVC.
+- **Alloy:** discovers Kubernetes pods and forwards pod logs to Loki.
+- **kube-state-metrics:** exposes Kubernetes object metrics.
+- **node-exporter:** runs on cluster nodes to expose host metrics.
+- **ResourceQuota/LimitRange:** bound memory requests and limits in the monitoring namespace.
+
+The monitoring Ingress routes `grafana.local` and `prometheus.local`; the Argo CD Ingress routes `argo.local`. These manifests use HTTP and do not configure TLS. Prometheus has no authentication configured, so restrict these routes to a trusted network. Loki is internal to the cluster.
+
+Alloy is configured to collect pod logs cluster-wide. Avoid emitting receipt contents, OCR text, credentials, or other sensitive values to application logs. If application log collection is not wanted, update Alloy's discovery/collection configuration before deployment.
+
+The monitoring PVCs request 20 Gi total and use the k3s `local-path` StorageClass. They are node-local storage, not backups or high-availability storage. The monitoring README contains resource details and host-resolution instructions.
+
+## Current limitations and public-repository checklist
+
+- **Authentication:** The receipt app has no login or user isolation. Do not expose it to the public internet in its current form.
+- **Transport security:** App, monitoring, and Argo CD Ingress manifests currently use HTTP; TLS is not configured.
+- **Prometheus access:** The Prometheus UI has no authentication.
+- **Receipt durability:** Garage is a single-replica Deployment and currently has no PVC mounted for its configured data directories. Receipt objects can be lost when the pod is replaced. Add persistent storage and test backups before relying on it.
+- **Database/monitoring durability:** Dev PostgreSQL and monitoring data use local-path storage. No off-host backup or restore automation is defined here.
+- **Network policy:** No Kubernetes NetworkPolicies are included.
+- **Infrastructure identity checks:** The current Proxmox provider configuration disables TLS certificate verification, and the Ansible inventory disables SSH host-key checking. Correct these before treating the setup as hardened.
+- **Environment-specific data:** `ansible/hosts` and `terraform/main.tf` contain private-network/Proxmox details and a local key-file path. Replace or parameterize these for a public portfolio repository. The Terraform module also contains an SSH public key; verify it is an intentionally public deployment key.
+- **Secrets:** Terraform state, local variable files, and Kubernetes Secret values must remain outside public Git. Confirm repository history and all staged/untracked files are clean before making the repository public.
+
+## Related documentation
+
+- [Monitoring stack details](monitoring/README.md)
+- [Application repository](https://github.com/olomg48/receipts)
+- [Application architecture](https://github.com/olomg48/receipts/blob/main/ARCHITECTURE-SUMMARY.md)
